@@ -1,0 +1,56 @@
+// Productor-consumidor con semáforos
+
+ 
+const int N = 6;
+const int ITEMS = 6;
+const int NPROD = 2;
+
+int buffer[N];
+int entrada = 0;
+int salida = 0;
+
+semaphore mutex = 1;
+semaphore vacios = N;
+semaphore llenos = 0;
+
+void productor(int id)
+{
+    int i;
+    int dato;
+
+    for (i = 1; i <= ITEMS; i++) {
+        dato = id * 100 + i;
+        wait(vacios);
+        wait(mutex);
+        buffer[entrada] = dato;
+        entrada = (entrada + 1) % N;
+        signal(mutex);
+        signal(llenos);
+        cout << "Productor " << id << " produce " << dato << endl;
+    }
+}
+
+void consumidor()
+{
+    int i;
+    int dato;
+
+    for (i = 1; i <= ITEMS * NPROD; i++) {
+        wait(llenos);
+        wait(mutex);
+        dato = buffer[salida];
+        salida = (salida + 1) % N;
+        signal(mutex);
+        signal(vacios);
+        cout << "Consumidor consume " << dato << endl;
+    }
+}
+
+void main()
+{
+    cobegin {
+        productor(1);
+        productor(2);
+        consumidor();
+    }
+}
