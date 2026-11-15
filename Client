@@ -1,0 +1,56 @@
+/* ======================= CLIENTE (client.c) =======================
+ * Uso: ./client IP_DEL_SERVIDOR   (ejemplo: ./client 127.0.0.1)
+ * Se conecta al servidor en el puerto 9999, recibe el fichero y lo
+ * muestra por pantalla.
+ * ================================================================== 
+ */
+ 
+#include <stdio.h>        // printf, fprintf, perror
+#include <stdlib.h>       // utilidades generales (no imprescindible aqui)
+#include <unistd.h>       // read, close
+#include <netinet/in.h>   // struct sockaddr_in, htons
+#include <netdb.h>        // funciones de resolucion de nombres (aqui no se usa)
+#include <string.h>       // bzero
+#include <sys/types.h>    // tipos de datos del sistema
+#include <sys/socket.h>   // socket, connect
+#include <arpa/inet.h>    // inet_addr: convierte "127.0.0.1" a binario
+#define KTAM 20           // tamano del buffer de recepcion
+#define KPUERTO 9999      // puerto del servidor (el mismo que usa el servidor)
+ 
+ 
+int main(int argc, char *argv[]){     // argc = numero de argumentos; argv = los argumentos como texto
+    char buffer[KTAM];                // zona donde se guardan los datos recibidos
+    int sock;                         // descriptor del socket del cliente
+    ssize_t tam;                      // bytes que devuelve cada read
+    struct sockaddr_in serv_addr;     // direccion (IP y puerto) del servidor al que nos conectamos
+    if(argc != 2){                    // el programa necesita exactamente un argumento: la IP (argv[0] es el nombre del programa)
+        fprintf(stderr, "Uso: %s <IP_del_servidor>\n", argv[0]); // explica como se usa, por la salida de errores
+        return 1;                     
+    }
+    sock = socket(AF_INET, SOCK_STREAM, 0); // crea el socket: IPv4, TCP
+    if (sock < 0)                     // -1 indica fallo
+        perror("Error. No se pudo crear socket"); 
+    else{                             // el socket se creo bien
+ 
+        bzero((char *) &serv_addr, sizeof(serv_addr)); // pone la estructura a 0
+        serv_addr.sin_port = htons(KPUERTO);       // puerto del servidor en orden de bytes de red
+        serv_addr.sin_family = AF_INET;            // familia IPv4
+        serv_addr.sin_addr.s_addr = inet_addr(argv[1]); // convierte la IP escrita (texto) a formato binario
+        if (connect(sock ,(struct sockaddr *) &serv_addr,sizeof(serv_addr)) < 0){ // intenta conectar con el servidor; -1 si falla
+            perror("Error. No se pudo conectar al socket"); // por ejemplo "Connection refused" si el servidor no esta arrancado
+            close(sock);              // libera el socket
+        }
+        else{                         
+            do{                       // bucle 
+                tam = read(sock, buffer, KTAM - 1); // lee hasta 19 bytes del servidor; deja 1 hueco para el '\0'
+                if(tam > 0){          // si ha llegado algo
+                    buffer[tam] = '\0'; // pone fin de cadena detras de lo recibido para poder usar printf
+                    printf("%s", buffer); // lo escribe por pantalla
+                }
+            }while(tam > 0);          // se repite mientras lleguen datos; read devuelve 0 cuando el servidor cierra la conexion, y -1 si hay error
+            if(tam < 0) perror("error al leer del socket"); // si el bucle acabo por error, lo indica
+            close(sock);              // cierra el socket
+        }
+    }
+    return 0;                         // fin del programa
+}
