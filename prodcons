@@ -1,56 +1,79 @@
-// Productor-consumidor con semáforos
+#include "gdefs.cm"
 
- 
 const int N = 6;
-const int ITEMS = 6;
-const int NPROD = 2;
+const int TOTAL = 12;
+const int PANADERO = 101;
+const int CLIENTE = 102;
+const int PRIMER_PAN = 201;
 
 int buffer[N];
 int entrada = 0;
 int salida = 0;
 
-semaphore mutex = 1;
-semaphore vacios = N;
-semaphore llenos = 0;
+semaphore huecos = N;
+semaphore panes = 0;
+binarysem mutex = 1;
 
-void productor(int id)
+void productor()
 {
-    int i;
-    int dato;
-
-    for (i = 1; i <= ITEMS; i++) {
-        dato = id * 100 + i;
-        wait(vacios);
+    int numero;
+    for (numero = 1; numero <= TOTAL; numero++) {
+        wait(huecos);
         wait(mutex);
-        buffer[entrada] = dato;
+        moveby(PANADERO, 90, 0);
+        buffer[entrada] = numero;
+        makevisible(PRIMER_PAN + entrada, 1);
+        cout << "Panadero deja pan " << numero
+             << " en hueco " << entrada << endl;
         entrada = (entrada + 1) % N;
+        moveby(PANADERO, -90, 0);
         signal(mutex);
-        signal(llenos);
-        cout << "Productor " << id << " produce " << dato << endl;
+        signal(panes);
     }
 }
 
 void consumidor()
 {
     int i;
-    int dato;
-
-    for (i = 1; i <= ITEMS * NPROD; i++) {
-        wait(llenos);
+    int numero;
+    for (i = 1; i <= TOTAL; i++) {
+        wait(panes);
         wait(mutex);
-        dato = buffer[salida];
+        moveby(CLIENTE, -70, 0);
+        numero = buffer[salida];
+        makevisible(PRIMER_PAN + salida, 0);
+        cout << "Cliente recoge pan " << numero
+             << " del hueco " << salida << endl;
         salida = (salida + 1) % N;
+        moveby(CLIENTE, 70, 0);
         signal(mutex);
-        signal(vacios);
-        cout << "Consumidor consume " << dato << endl;
+        signal(huecos);
     }
 }
 
 void main()
 {
+    int i;
+
+    create(1, RECTANGLE, YELLOW, 135, 190, 330, 80);
+    create(PANADERO, ANIMAGE, 0, 10, 90, 70, 100);
+    create(CLIENTE, ANIMAGE, 0, 515, 90, 70, 100);
+
+    for (i = 0; i < N; i++) {
+        create(10 + i, LINE_RECTANGLE, BLACK,
+               145 + 53 * i, 200, 45, 55);
+        create(PRIMER_PAN + i, ANIMAGE, 0,
+               148 + 53 * i, 210, 40, 30);
+        makevisible(PRIMER_PAN + i, 0);
+    }
+
+    cout << "Panaderia con 6 huecos y 12 panes" << endl;
+    cout << "Huecos numerados de 0 a 5, de izquierda a derecha" << endl;
+
     cobegin {
-        productor(1);
-        productor(2);
+        productor();
         consumidor();
     }
+
+    cout << "FIN: los 12 panes han sido recogidos" << endl;
 }
