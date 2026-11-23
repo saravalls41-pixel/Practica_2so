@@ -1,103 +1,129 @@
-/* ===================== SERVIDOR CONCURRENTE (server.c) =====================
- * Escucha en el puerto 9999. Por cada cliente que se conecta crea un proceso
- * hijo (fork) que le envia el fichero Google.html. El padre sigue aceptando.
- * ========================================================================== */
+#include <errno.h>
+#include <fcntl.h>
+#include <netinet/in.h>
+#include <signal.h>
+#include <stdio.h>
+#include <sys/socket.h>
+#include <unistd.h>
 
-#include <stdio.h>       
-#include <stdlib.h>       
-#include <string.h>       
-#include <unistd.h>       
-#include <sys/socket.h>   
-#include <netinet/in.h>   
-#include <fcntl.h>        
-#include <sys/types.h>    
-#include <sys/wait.h>     
-#include <signal.h>       
-#define KTAM 20           
-#define KPUERTO 9999      
+#define KTAM 20
+#define KPUERTO 9999
 
-
-int main(void){                       
-    socklen_t tam;                    // tamano de la estructura de direccion del cliente
-    ssize_t leidos, enviados, escritos; // leidos: bytes leidos del fichero; enviados: bytes ya enviados del bloque; escritos: lo que devuelve cada write
-    struct sockaddr_in serverAddress, clientAddress; // direccion del servidor (donde escucha) y del cliente (la rellena accept)
-    int     sock,       // socket de escucha: solo sirve para aceptar conexiones
-        newSock,    // socket que devuelve accept: sirve para hablar con UN cliente
-        fichOrigen,     // descriptor del fichero Google.html
-        opcion = 1;     
-    char buffer[KTAM];                // zona de memoria donde se guardan los bloques leidos
-    pid_t pid;                        // aqui se guarda lo que devuelve fork
-
-    sock = socket(AF_INET, SOCK_STREAM, 0); // crea el socket: IPv4 (AF_INET), TCP (SOCK_STREAM), protocolo por defecto (0)
-    if (sock < 0)                     // si devuelve -1 ha fallado
-        perror("Error. No se pudo abrir el socket\n"); // muestra el motivo del error
-    else{                             // si el socket se creo bien, seguimos
-        bzero((char *) &serverAddress, sizeof(serverAddress)); // pone toda la estructura a 0 para no tener basura
-        serverAddress.sin_port = htons(KPUERTO);  // puerto 9999; htons lo pasa al orden de bytes de red (big-endian)
-        serverAddress.sin_family = AF_INET;       // familia de direcciones IPv4
-        serverAddress.sin_addr.s_addr = INADDR_ANY; // acepta conexiones por cualquier interfaz de red de la maquina
-        setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &opcion, sizeof(opcion)); // permite reutilizar el puerto al reiniciar el servidor sin esperar (evita "Address already in use")
-        if(bind(sock, (struct sockaddr *) &serverAddress, sizeof(serverAddress)) < 0){ // asocia el socket a la IP y puerto; -1 si falla
-            perror("Error no se pudo vincular el socket"); // muestra el error (por ejemplo puerto ocupado)
-            close(sock);              // libera el socket
-        }
-        else{                         // bind correcto
-            if(listen(sock, 5) < 0){  // pone el socket en escucha; admite hasta 5 conexiones pendientes en cola
-                perror("error en listen"); // muestra el error
-                close(sock);          // libera el socket
-                return 1;             // termina indicando error
-            }
-            signal(SIGCHLD, SIG_IGN); // al ignorar SIGCHLD el sistema elimina solo a los hijos terminados: no quedan zombies
-            signal(SIGPIPE, SIG_IGN); // si el cliente se desconecta a mitad, write devuelve error en vez de matar al servidor
-            do{                       // bucle infinito: el servidor atiende clientes siempre
-                tam = sizeof(clientAddress); // accept necesita saber el tamano de la estructura donde guardar la direccion del cliente
-                newSock = accept(sock, (struct sockaddr *) &clientAddress, &tam); // se BLOQUEA hasta que llega un cliente; devuelve un socket nuevo para ese cliente
-                if(newSock < 0){      // si accept falla
-                    perror("error al aceptar la conexion"); // muestra el error y vuelve al bucle
-                }
-                else{               
-                    printf("aceptando conexion\n"); // mensaje de seguimiento
-                    fflush(stdout);   // vacia el buffer de salida antes del fork para que el hijo no repita el mensaje
-                    pid = fork();     // crea un proceso hijo, copia del padre; devuelve 0 al hijo, el pid del hijo al padre, -1 si falla
-                    if(pid == 0){     // ---- CODIGO DEL HIJO ----
-                        close(sock);  // el hijo no acepta conexiones, asi que cierra su copia del socket de escucha
-                        printf("hijo acepta conexion\n"); // mensaje de seguimiento
-                        fichOrigen = open("Google.html", O_RDONLY); 
-                        if(fichOrigen < 0){ 
-                            perror("error al abrir el fichero\n"); 
-                        }
-                        else{        
-                            leidos = read(fichOrigen, buffer, KTAM - 1); // lee el primer bloque (hasta 19 bytes); devuelve los bytes leidos, 0 al final, -1 si error
-                            while(leidos > 0){ // mientras queden datos en el fichero
-                                enviados = 0; // todavia no se ha enviado nada de este bloque
-                                while(enviados < leidos){ // write puede enviar menos de lo pedido, por eso se repite hasta enviar todo
-                                    escritos = write(newSock, buffer + enviados, leidos - enviados); // envia al cliente lo que falta: desde la posicion 'enviados', 'leidos - enviados' bytes
-                                    if(escritos <= 0){ // error al enviar (cliente desconectado, etc.)
-                                        perror("error al enviar al cliente"); // muestra el error
-                                        break; // sale del bucle 
-                                    }
-                                    enviados += escritos; // suma los bytes 
-                                }
-                                if(enviados < leidos) break; 
-                                leidos = read(fichOrigen, buffer, KTAM - 1); 
-                            }
-                            if(leidos < 0) perror("error al leer el fichero"); // si la ultima lectura dio error, lo muestra
-                            close(fichOrigen); // cierra el fichero 
-                        }
-                        printf("soy el que atendia la peticion, ya he acabado\n"); // mensaje de seguimiento
-                        close(newSock); // cierra la conexion con el cliente: el cliente recibira fin de fichero (read devuelve 0)
-                        fflush(stdout); // fuerza que salgan los mensajes pendientes antes de terminar
-                        _exit(0);     // el hijo TERMINA aqui; si no, volveria al accept y habria dos servidores
-                    }
-                    else if(pid > 0){ // ---- CODIGO DEL PADRE ----
-                        close(newSock); // el padre no habla con el cliente; cierra su copia para que la conexion se cierre de verdad cuando acabe el hijo
-                    }
-                    else{             // pid < 0: fork ha fallado
-                        perror("error en fork"); // muestra el error
-                        close(newSock); // cierra la conexion con ese cliente, que no se podra atender
-                    }
-                }
-            }while(1);                // repite siempre
+static int enviar_archivo(int conexion)
+{
+    int archivo = open("Google.html", O_RDONLY);
+    if (archivo < 0) {
+        perror("Google.html");
+        return 1;
     }
-    return 0;                        
+
+    char buffer[KTAM];
+    ssize_t leidos;
+
+    while ((leidos = read(archivo, buffer, sizeof buffer)) > 0) {
+        ssize_t enviados = 0;
+
+        while (enviados < leidos) {
+            ssize_t escritos = write(conexion, buffer + enviados,
+                                     leidos - enviados);
+
+            if (escritos < 0 && errno == EINTR)
+                continue;
+
+            if (escritos <= 0) {
+                perror("write");
+                close(archivo);
+                return 1;
+            }
+
+            enviados += escritos;
+        }
+    }
+
+    if (leidos < 0)
+        perror("read");
+
+    close(archivo);
+    return leidos < 0;
+}
+
+int main(void)
+{
+    int escucha = socket(AF_INET, SOCK_STREAM, 0);
+    if (escucha < 0) {
+        perror("socket");
+        return 1;
+    }
+
+    int opcion = 1;
+    setsockopt(escucha, SOL_SOCKET, SO_REUSEADDR,
+               &opcion, sizeof opcion);
+
+    struct sockaddr_in servidor = {0};
+    servidor.sin_family = AF_INET;
+    servidor.sin_port = htons(KPUERTO);
+    servidor.sin_addr.s_addr = htonl(INADDR_ANY);
+
+    if (bind(escucha, (struct sockaddr *)&servidor,
+             sizeof servidor) < 0) {
+        perror("bind");
+        close(escucha);
+        return 1;
+    }
+
+    if (listen(escucha, 5) < 0) {
+        perror("listen");
+        close(escucha);
+        return 1;
+    }
+
+    signal(SIGCHLD, SIG_IGN);
+    signal(SIGPIPE, SIG_IGN);
+
+    printf("Servidor escuchando en el puerto %d\n", KPUERTO);
+    fflush(stdout);
+
+    for (;;) {
+        int conexion = accept(escucha, NULL, NULL);
+
+        if (conexion < 0) {
+            if (errno == EINTR)
+                continue;
+
+            perror("accept");
+            close(escucha);
+            return 1;
+        }
+
+        printf("Aceptando conexion\n");
+        fflush(stdout);
+
+        pid_t pid = fork();
+
+        if (pid == 0) {
+            close(escucha);
+
+            printf("Hijo %ld: enviando Google.html\n",
+                   (long)getpid());
+            fflush(stdout);
+
+            int resultado = enviar_archivo(conexion);
+
+            if (resultado == 0)
+                printf("Hijo %ld: transferencia terminada\n",
+                       (long)getpid());
+            else
+                printf("Hijo %ld: error en la transferencia\n",
+                       (long)getpid());
+
+            fflush(stdout);
+            close(conexion);
+            _exit(resultado);
+        }
+
+        if (pid < 0)
+            perror("fork");
+
+        close(conexion);
+    }
 }
